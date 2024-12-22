@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "musicbot-discord"
+version = "1.0.0"
+description = "The basic music bot for discord."
+authors = ["leoverem14"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+yt-dlp = "^2024.12.13"
+discord-py = "^2.4.0"
+python-dotenv = "^1.0.1"
+pynacl = "^1.5.0"
+traceback2 = "^1.4.0"
+interaction = "^1.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
