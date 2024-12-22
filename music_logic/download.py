@@ -15,9 +15,11 @@ async def download_audio(ydl, url, message, title, retries, max_retries, ctx, in
     def run_download(url, file_path_holder, message, title, retries, max_retries, ctx, info):
       nonlocal file_path
       nonlocal current_retries
+      nonlocal delay
       start_time = time.time()
       total_bytes = 0
       downloaded_bytes = 0
+      delay = 1 # Ініціалізуємо delay тут
       while current_retries < max_retries:
         try:
 
@@ -106,8 +108,9 @@ async def download_audio(ydl, url, message, title, retries, max_retries, ctx, in
             if file_path and os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Error removing file: {e}")
+                    traceback.print_exc()
     
     
     file_path_holder = [None]
@@ -125,11 +128,15 @@ async def extract_info_with_retry(ydl, search_term_with_music, retries, max_retr
     
     while current_retries < max_retries:
         try:
+            
             info = ydl.extract_info(search_term_with_music, download=False)
-
+            
             if not isinstance(info, dict):
                  raise ValueError(f"Invalid response format from yt-dlp: {type(info)}")
-
+            
+            if info.get('entries') and info['entries'][0].get('private', False):
+                return None
+            
             if info:
                 return info
             else:
@@ -158,7 +165,7 @@ async def extract_info_with_retry(ydl, search_term_with_music, retries, max_retr
                delay *= 2
                await update_message(message, f"Unexpected error: {str(e)}. Retrying... ({current_retries}/{max_retries})")
             else:
-                await update_message(message, f"Failed after {max_retries} attempts: {str(e)}")
+                await update_message(message, f"Failed to extract info after {max_retries} attempts: {str(e)}")
                 return None
 
     return None

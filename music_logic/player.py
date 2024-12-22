@@ -18,6 +18,7 @@ last_activity = {}
 bot = None
 current_volume = 100.0
 session_messages = {}
+playlists = {}
 
 async def search_youtube_tracks(search_term, max_results=5):
     ydl_opts_search = YTDL_OPTS.copy()
@@ -146,18 +147,27 @@ async def queue_playlist(interaction: discord.Interaction, playlist_url):
               return
 
           if info and 'entries' in info:
+             playlist_entries = []
              for entry in info['entries']:
-                if entry and 'url' in entry:
+                if entry and 'url' in entry and not entry.get('is_live', False) and not entry.get('private', False):
                     try:
                       music_queues[guild_id].append(entry['url'])
+                      playlist_entries.append(entry)
                     except Exception as e:
                        print(f"Помилка при додаванні пісні до черги: {e}")
                        traceback.print_exc()
                        embed = create_embed("Помилка при додаванні пісні до черги.", str(e))
                        await update_message(message, embed=embed)
                        continue
-             embed = create_embed("Пісні з плейліста додано до черги.")
-             await update_message(message, embed=embed)
+             if playlist_entries:
+                if guild_id not in playlists:
+                    playlists[guild_id] = {}
+                playlists[guild_id][playlist_url] = playlist_entries
+                embed = create_embed("Пісні з плейліста додано до черги.")
+                await update_message(message, embed=embed)
+             else:
+                embed = create_embed("Не знайдено пісень у плейлісті або всі пісні приватні.")
+                await update_message(message, embed=embed)
              voice_client = interaction.guild.voice_client
              if not voice_client or not voice_client.is_playing():
                 if music_queues[guild_id]:
@@ -242,7 +252,8 @@ async def play_music(interaction: discord.Interaction, search_term):
                     if file_path:
                       if voice_client:
                         try:
-                          
+                          if voice_client.is_playing():
+                            voice_client.stop()
                           audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(file_path, **FFMPEG_OPTS), volume=current_volume/100.0)
                           voice_client.play(audio_source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next_handler(interaction), bot.loop))
                           embed = create_embed(f'Зараз грає: {title} 0/{format_utils.format_time(info.get("duration"))}')
@@ -547,8 +558,106 @@ async def shutdown(interaction: discord.Interaction):
         embed = create_embed(f"Виникла помилка під час завершення: {e}")
         await update_message(confirmation_message, embed=embed)
 
-async def update_message(message, content=None, embed=None):
+async def update_message(message, content=None, embed=None, view=None):
     if isinstance(message, discord.WebhookMessage):
-        await message.edit(content=content, embed=embed)
+        await message.edit(content=content, embed=embed, view=view)
     else:
-        await message.edit(content=content, embed=embed)
+        await message.edit(content=content, embed=embed, view=view)
+
+async def playlist(interaction: discord.Interaction):
+    await interaction.response.defer()
+    guild_id = interaction.guild_id
+    if guild_id not in playlists or not playlists[guild_id]:
+        embed = create_embed("Немає завантажених плейлистів.")
+        await interaction.followup.send(embed=embed)
+        return
+    
+    playlist_urls = list(playlists[guild_id].keys())
+    if not playlist_urls:
+        embed = create_embed("Немає завантажених плейлистів.")
+        await interaction.followup.send(embed=embed)
+        return
+    
+    current_page = 0
+    items_per_page = 5
+    
+    async def update_playlist_message(page, message=None):
+        start_index = page * items_per_page
+        end_index = start_index + items_per_page
+        
+        playlist_url = playlist_urls[0]
+        playlist_entries = playlists[guild_id][playlist_url]
+        
+        current_entries = playlist_entries[start_index:end_index]
+        
+        embed = create_embed(f"Треки з плейлиста:", f"Сторінка {page + 1}/{len(playlist_entries) // items_per_page + 1}")
+        
+        for i, entry in enumerate(current_entries):
+            embed.add_field(
+                name=f"{start_index + i + 1}. {entry.get('title', 'Unknown Title')}",
+                value=f"({format_utils.format_time(entry.get('duration', 0))})",
+                inline=False
+            )
+        
+        buttons = []
+        if page > 0:
+            buttons.append(discord.ui.Button(label="Назад", style=discord.ButtonStyle.primary, custom_id="prev"))
+        if end_index < len(playlist_entries):
+            buttons.append(discord.ui.Button(label="Вперед", style=discord.ButtonStyle.primary, custom_id="next"))
+        for i, entry in enumerate(current_entries):
+            buttons.append(discord.ui.Button(label=str(start_index + i + 1), style=discord.ButtonStyle.success, custom_id=str(start_index + i + 1)))
+        buttons.append(discord.ui.Button(label="Відміна", style=discord.ButtonStyle.danger, custom_id="cancel"))
+        view = discord.ui.View()
+        for button in buttons:
+            view.add_item(button)
+        
+        if message:
+            await update_message(message, embed=embed, view=view)
+        else:
+            message = await interaction.followup.send(embed=embed, view=view)
+            if guild_id not in session_messages:
+                session_messages[guild_id] = []
+            session_messages[guild_id].append(message.id)
+        
+        return message
+    
+    message = await update_playlist_message(current_page)
+    
+    def check(interaction_button):
+        return interaction_button.user == interaction.user and interaction_button.message.id == message.id
+    
+    while True:
+        try:
+            interaction_button = await bot.wait_for("interaction", check=check, timeout=30)
+            if interaction_button.data['custom_id'] == "prev":
+                current_page -= 1
+                message = await update_playlist_message(current_page, message)
+            elif interaction_button.data['custom_id'] == "next":
+                current_page += 1
+                message = await update_playlist_message(current_page, message)
+            elif interaction_button.data['custom_id'] == "cancel":
+                await message.delete()
+                embed = create_embed("Вибір скасовано.")
+                await interaction.followup.send(embed=embed)
+                session_messages[guild_id].remove(message.id)
+                return
+            else:
+                selected_track_index = int(interaction_button.data['custom_id']) - 1
+                playlist_url = playlist_urls[0]
+                selected_track = playlists[guild_id][playlist_url][selected_track_index]
+                await message.delete()
+                session_messages[guild_id].remove(message.id)
+                await play_music(interaction, selected_track['url'])
+                return
+        except asyncio.TimeoutError:
+            await message.delete()
+            embed = create_embed("Час вибору треку вийшов.")
+            await interaction.followup.send(embed=embed)
+            session_messages[guild_id].remove(message.id)
+            return
+        except Exception as e:
+            print(f"Error during playlist selection: {e}")
+            traceback.print_exc()
+            embed = create_embed("Виникла помилка під час вибору треку.")
+            await interaction.followup.send(embed=embed)
+            return
