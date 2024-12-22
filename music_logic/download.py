@@ -108,9 +108,8 @@ async def download_audio(ydl, url, message, title, retries, max_retries, ctx, in
             if file_path and os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                except Exception as e:
-                    print(f"Error removing file: {e}")
-                    traceback.print_exc()
+                except:
+                    pass
     
     
     file_path_holder = [None]
@@ -128,14 +127,21 @@ async def extract_info_with_retry(ydl, search_term_with_music, retries, max_retr
     
     while current_retries < max_retries:
         try:
-            
             info = ydl.extract_info(search_term_with_music, download=False)
-            
+
             if not isinstance(info, dict):
                  raise ValueError(f"Invalid response format from yt-dlp: {type(info)}")
             
             if info.get('entries') and info['entries'][0].get('private', False):
                 return None
+            
+            if info and info.get('extractor') == 'youtube' and info.get('entries') and info['entries'][0].get('availability') == 'private':
+                return None
+            
+            if info and info.get('extractor') == 'youtube' and info.get('entries') and info['entries'][0].get('location'):
+                location = info['entries'][0].get('location')
+                if location and 'ru' in location.lower():
+                    return None
             
             if info:
                 return info

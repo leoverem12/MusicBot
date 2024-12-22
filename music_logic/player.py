@@ -20,6 +20,11 @@ current_volume = 100.0
 session_messages = {}
 playlists = {}
 
+def contains_russian_letters(text):
+    if not text:
+        return False
+    return bool(re.search(r'[ыъэ]', text, re.IGNORECASE))
+
 async def search_youtube_tracks(search_term, max_results=5):
     ydl_opts_search = YTDL_OPTS.copy()
     ydl_opts_search['extract_flat'] = True
@@ -93,18 +98,29 @@ async def play(interaction: discord.Interaction, search_term: str):
       
       try:
           interaction_button = await bot.wait_for("interaction", check=check, timeout=30)
-          if interaction_button.data['custom_id'] == "cancel":
+          if interaction_button:
+            if interaction_button.data['custom_id'] == "cancel":
+                await message.delete()
+                embed = create_embed("Вибір скасовано.")
+                await interaction.followup.send(embed=embed)
+                session_messages[guild_id].remove(message.id)
+                return
+            else:
+                selected_track_index = int(interaction_button.data['custom_id']) - 1
+                selected_track = tracks[selected_track_index]
+                if contains_russian_letters(selected_track.get('title', '')):
+                    embed = create_embed("Цей трек містить російські літери і не може бути відтворений.")
+                    await interaction.followup.send(embed=embed)
+                    return
+                await message.delete()
+                session_messages[guild_id].remove(message.id)
+                await play_music(interaction, selected_track['url'])
+          else:
               await message.delete()
-              embed = create_embed("Вибір скасовано.")
+              embed = create_embed("Час вибору треку вийшов.")
               await interaction.followup.send(embed=embed)
               session_messages[guild_id].remove(message.id)
               return
-          else:
-              selected_track_index = int(interaction_button.data['custom_id']) - 1
-              selected_track = tracks[selected_track_index]
-              await message.delete()
-              session_messages[guild_id].remove(message.id)
-              await play_music(interaction, selected_track['url'])
       except asyncio.TimeoutError:
           await message.delete()
           embed = create_embed("Час вибору треку вийшов.")
@@ -151,6 +167,9 @@ async def queue_playlist(interaction: discord.Interaction, playlist_url):
              for entry in info['entries']:
                 if entry and 'url' in entry and not entry.get('is_live', False) and not entry.get('private', False):
                     try:
+                      if contains_russian_letters(entry.get('title', '')):
+                        print(f"Пропущено відео з російськими літерами: {entry.get('title', 'Unknown Title')}")
+                        continue
                       music_queues[guild_id].append(entry['url'])
                       playlist_entries.append(entry)
                     except Exception as e:
@@ -166,7 +185,7 @@ async def queue_playlist(interaction: discord.Interaction, playlist_url):
                 embed = create_embed("Пісні з плейліста додано до черги.")
                 await update_message(message, embed=embed)
              else:
-                embed = create_embed("Не знайдено пісень у плейлісті або всі пісні приватні.")
+                embed = create_embed("Не знайдено пісень у плейлісті або всі пісні приватні/з російськими літерами.")
                 await update_message(message, embed=embed)
              voice_client = interaction.guild.voice_client
              if not voice_client or not voice_client.is_playing():
@@ -237,6 +256,10 @@ async def play_music(interaction: discord.Interaction, search_term):
                          await update_message(message, embed=embed)
                          break
                     title = info.get('title', 'Unknown Title')
+                    if contains_russian_letters(title):
+                        embed = create_embed("Цей трек містить російські літери і не може бути відтворений.")
+                        await update_message(message, embed=embed)
+                        break
                     embed = create_embed(f"Завантаження {title}")
                     await update_message(message, embed=embed)
                     
@@ -327,7 +350,9 @@ async def play_next(interaction: discord.Interaction):
             if file_path and os.path.exists(file_path):
                 await asyncio.sleep(0.5)
                 try:
-                    os.remove(file_path)
+                    if voice_client.is_playing():
+                        voice_client.stop()                    
+                        os.remove(file_path)
                 except Exception as e:
                     print(f"Error in play_next at file remove: {e}")
                     traceback.print_exc()
