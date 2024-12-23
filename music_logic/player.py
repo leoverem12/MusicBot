@@ -19,6 +19,7 @@ bot = None
 current_volume = 100.0
 session_messages = {}
 playlists = {}
+looping = {}
 
 def contains_russian_letters(text):
     if not text:
@@ -46,6 +47,10 @@ async def search_youtube_tracks(search_term, max_results=5):
 
 async def play(interaction: discord.Interaction, search_term: str):
     await interaction.response.defer()
+    if not interaction.user.voice:
+        embed = create_embed("Ви повинні бути у голосовому каналі, щоб використовувати цю команду.")
+        await interaction.followup.send(embed=embed)
+        return
     voice_channel = interaction.user.voice.channel
     if not voice_channel:
         embed = create_embed("Ви повинні бути у голосовому каналі, щоб використовувати цю команду.")
@@ -351,8 +356,8 @@ async def play_next(interaction: discord.Interaction):
                 await asyncio.sleep(0.5)
                 try:
                     if voice_client.is_playing():
-                        voice_client.stop()                    
-                        os.remove(file_path)
+                        voice_client.stop()
+                    os.remove(file_path)
                 except Exception as e:
                     print(f"Error in play_next at file remove: {e}")
                     traceback.print_exc()
@@ -360,8 +365,12 @@ async def play_next(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error deleting player in play_next: {e}")
         traceback.print_exc()
-
-    if guild_id in music_queues and music_queues[guild_id]:
+    
+    if guild_id in looping and looping[guild_id] == True:
+      if guild_id in players:
+        current_track_url = players[guild_id][5]
+        await play_music(interaction, current_track_url)
+    elif guild_id in music_queues and music_queues[guild_id]:
         next_song = music_queues[guild_id].popleft()
         await play_music(interaction, next_song)
     else:
@@ -381,6 +390,8 @@ async def start_idle_timeout(interaction: discord.Interaction):
                  players.pop(guild_id, None)
                  music_queues.pop(guild_id, None)
                  last_activity.pop(guild_id, None)
+                 if guild_id in looping:
+                    looping.pop(guild_id, None)
              except Exception:
                 pass
              print(f"Відключено від голосового каналу на сервері {interaction.guild.name}, через неактивність.")
@@ -407,6 +418,8 @@ async def start_idle_timeout(interaction: discord.Interaction):
                         players.pop(guild_id, None)
                         music_queues.pop(guild_id, None)
                         last_activity.pop(guild_id, None)
+                        if guild_id in looping:
+                            looping.pop(guild_id, None)
                     except Exception as e:
                          print(f"Error during disconnect on time out {e}")
                          traceback.print_exc()
@@ -417,6 +430,8 @@ async def start_idle_timeout(interaction: discord.Interaction):
                       players.pop(guild_id, None)
                       music_queues.pop(guild_id, None)
                       last_activity.pop(guild_id, None)
+                      if guild_id in looping:
+                            looping.pop(guild_id, None)
                  except:
                      pass
                  return
@@ -499,6 +514,8 @@ async def stop(interaction: discord.Interaction):
             players.pop(guild_id, None)
             music_queues.pop(guild_id, None)
             last_activity.pop(guild_id, None)
+            if guild_id in looping:
+                looping.pop(guild_id, None)
             
             if guild_id in session_messages:
                 for message_id in session_messages[guild_id]:
@@ -655,7 +672,7 @@ async def playlist(interaction: discord.Interaction):
         try:
             interaction_button = await bot.wait_for("interaction", check=check, timeout=30)
             if interaction_button.data['custom_id'] == "prev":
-                current_page -= 1
+                current_page -= 1 
                 message = await update_playlist_message(current_page, message)
             elif interaction_button.data['custom_id'] == "next":
                 current_page += 1
@@ -686,3 +703,15 @@ async def playlist(interaction: discord.Interaction):
             embed = create_embed("Виникла помилка під час вибору треку.")
             await interaction.followup.send(embed=embed)
             return
+        
+async def loop(interaction: discord.Interaction):
+    await interaction.response.defer()
+    guild_id = interaction.guild_id
+    if guild_id not in looping:
+        looping[guild_id] = False
+    looping[guild_id] = not looping[guild_id]
+    if looping[guild_id]:
+        embed = create_embed("Зациклення треку увімкнено.")
+    else:
+        embed = create_embed("Зациклення треку вимкнено.")
+    await interaction.followup.send(embed=embed)
